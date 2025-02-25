@@ -19,10 +19,13 @@ import pandas as pd
 import torch
 import yaml
 
+from types import SimpleNamespace
+
 # Constants
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[2]  # YOLO
 DEFAULT_CONFIG = ROOT / "yolo/configs/default.yaml"
+DEFAULT_CFG_PATH = ROOT / "yolo/configs/default.yaml"
 RANK = int(os.getenv('RANK', -1))
 NUM_THREADS = min(8, max(1, os.cpu_count() - 1))  # number of YOLOv5 multiprocessing threads
 AUTOINSTALL = str(os.getenv('YOLO_AUTOINSTALL', True)).lower() == 'true'  # global auto-install mode
@@ -316,7 +319,20 @@ class TryExcept(contextlib.ContextDecorator):
             print(emojis(f"{self.msg}{': ' if self.msg else ''}{value}"))
         return True
 
+class IterableSimpleNamespace(SimpleNamespace):
+    
+    def __iter__(self):
+        return iter(vars(self).items())
 
+    def __str__(self):
+        return "\n".join(f"{k}={v}" for k, v in vars(self).items())
+
+    def __getattr__(self, attr):
+        name = self.__class__.__name__
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+    
 def threaded(func):
     # Multi-threads a target function and returns thread. Usage: @threaded decorator
     def wrapper(*args, **kwargs):
@@ -410,13 +426,7 @@ def get_settings(file=USER_CONFIG_DIR / 'settings.yaml', version='0.0.1'):
         correct = settings.keys() == defaults.keys() \
                   and all(type(a) == type(b) for a, b in zip(settings.values(), defaults.values())) \
                   and check_version(settings['settings_version'], version)
-        if not correct:
-            LOGGER.warning('WARNING ⚠️ Ultralytics settings reset to defaults. '
-                           '\nThis is normal and may be due to a recent ultralytics package update, '
-                           'but may have overwritten previous settings. '
-                           f"\nYou may view and update settings directly in '{file}'")
-            settings = defaults  # merge **defaults with **settings (prefer **settings)
-            yaml_save(file, settings)  # save updated defaults
+
 
         return settings
 

@@ -6,6 +6,9 @@ import math
 import warnings
 from pathlib import Path
 
+import matplotlib
+matplotlib.use('Agg')  # Use a non-interactive backend
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
