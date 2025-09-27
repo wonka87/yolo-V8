@@ -13,7 +13,12 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import pkg_resources as pkg
+try:
+    from importlib.metadata import distributions, version
+except ImportError:
+    from importlib_metadata import distributions, version
+from packaging.requirements import Requirement
+from packaging.version import parse as parse_version
 import psutil
 import torch
 from IPython import display
@@ -93,7 +98,6 @@ def check_version(current: str = "0.0.0",
     Returns:
         bool: True if minimum version is met, False otherwise.
     """
-    from pkg_resources import parse_version
     current, minimum = (parse_version(x) for x in (current, minimum))
     result = (current == minimum) if pinned else (current >= minimum)  # bool
     warning_message = f"WARNING ⚠️ {name}{minimum} is required by YOLOv8, but {name}{current} is currently installed"
@@ -166,16 +170,24 @@ def check_requirements(requirements=ROOT.parent / 'requirements.txt', exclude=()
         file = requirements.resolve()
         assert file.exists(), f"{prefix} {file} not found, check failed."
         with file.open() as f:
-            requirements = [f'{x.name}{x.specifier}' for x in pkg.parse_requirements(f) if x.name not in exclude]
+            requirements = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+            requirements = [req for req in requirements if Requirement(req).name not in exclude]
     elif isinstance(requirements, str):
         requirements = [requirements]
+
+    def check_requirement(requirement_str):
+        """Check if a requirement is satisfied."""
+        try:
+            req = Requirement(requirement_str)
+            installed_version = version(req.name)
+            return req.specifier.contains(installed_version)
+        except Exception:
+            return False
 
     s = ''
     n = 0
     for r in requirements:
-        try:
-            pkg.require(r)
-        except (pkg.VersionConflict, pkg.DistributionNotFound):  # exception if requirements not met
+        if not check_requirement(r):
             s += f'"{r}" '
             n += 1
 
