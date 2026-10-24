@@ -49,13 +49,8 @@ def smart_inference_mode(torch_1_9=check_version(torch.__version__, '1.9.0')):
 
 def DDP_model(model):
     # Model DDP creation with checks
-    assert not check_version(torch.__version__, '1.12.0', pinned=True), \
-        'torch==1.12.0 torchvision==0.13.0 DDP training is not supported due to a known issue. ' \
-        'Please upgrade or downgrade torch to use DDP. See https://github.com/ultralytics/yolov5/issues/8395'
-    if check_version(torch.__version__, '1.11.0'):
-        return DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
-    else:
-        return DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
+    # PyTorch 2.8+ uses static_graph=True by default for DDP
+    return DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
 
 
 def select_device(device='', batch_size=0, newline=False):
@@ -289,7 +284,7 @@ def strip_optimizer(f='best.pt', s=''):
     Returns:
         None
     """
-    x = torch.load(f, map_location=torch.device('cpu'))
+    x = torch.load(f, map_location=torch.device('cpu'), weights_only=False)
     args = {**DEFAULT_CONFIG_DICT, **x['train_args']}  # combine model args with default args, preferring model args
     if x.get('ema'):
         x['model'] = x['ema']  # replace model with ema

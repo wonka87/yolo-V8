@@ -3,14 +3,26 @@
 import re
 from pathlib import Path
 
-import pkg_resources as pkg
 from setuptools import find_packages, setup
 
 # Settings
 FILE = Path(__file__).resolve()
 PARENT = FILE.parent  # root directory
 README = (PARENT / "README.md").read_text(encoding="utf-8")
-REQUIREMENTS = [f'{x.name}{x.specifier}' for x in pkg.parse_requirements((PARENT / 'requirements.txt').read_text())]
+
+# Parse requirements without pkg_resources (deprecated)
+def parse_requirements(file_path):
+    """Parse requirements.txt file and return list of requirements."""
+    requirements = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            # Skip empty lines and comments
+            if line and not line.startswith('#'):
+                requirements.append(line)
+    return requirements
+
+REQUIREMENTS = parse_requirements(PARENT / 'requirements.txt')
 PKG_REQUIREMENTS = ['sentry_sdk']  # pip-only requirements
 
 
@@ -22,7 +34,7 @@ def get_version():
 setup(
     name="ultralytics",  # name of pypi package
     version=get_version(),  # version of pypi package
-    python_requires=">=3.7,<=3.11",
+    python_requires=">=3.9,<=3.13",
     license='GPL-3.0',
     description='Ultralytics YOLOv8',
     long_description=README,
@@ -43,8 +55,9 @@ setup(
     classifiers=[
         "Intended Audience :: Developers", "Intended Audience :: Science/Research",
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)", "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7", "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9", "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Topic :: Software Development", "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Scientific/Engineering :: Image Recognition", "Operating System :: POSIX :: Linux",
