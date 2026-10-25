@@ -369,7 +369,7 @@ class BaseTrainer:
         ckpt = {
             'epoch': self.epoch,
             'best_fitness': self.best_fitness,
-            'model': deepcopy(de_parallel(self.model)).half(),
+            'model': None,  # loaders use 'ema' first (tasks.attempt_load_*), strip_optimizer() copies ema -> model
             'ema': deepcopy(self.ema.ema).half(),
             'updates': self.ema.updates,
             'optimizer': self.optimizer.state_dict(),
