@@ -21,7 +21,7 @@ CLI_HELP_MSG = \
 
             yolo TASK MODE ARGS
 
-            Where   TASK (optional) is one of [detect, segment, classify]
+            Where   TASK (optional) is detect
                     MODE (required) is one of [train, val, predict, export]
                     ARGS (optional) are any number of custom 'arg=value' pairs like 'imgsz=320' that override defaults.
                         For a full list of available ARGS see https://docs.ultralytics.com/config.
@@ -29,14 +29,12 @@ CLI_HELP_MSG = \
         Train a detection model for 10 epochs with an initial learning_rate of 0.01
             yolo detect train data=coco128.yaml model=yolov8n.pt epochs=10 lr0=0.01
 
-        Predict a YouTube video using a pretrained segmentation model at image size 320:
-            yolo segment predict model=yolov8n-seg.pt source=https://youtu.be/Zgi9g1ksQHc imgsz=320
 
         Validate a pretrained detection model at batch-size 1 and image size 640:
             yolo detect val model=yolov8n.pt data=coco128.yaml batch=1 imgsz=640
 
-        Export a YOLOv8n classification model to ONNX format at image size 224 by 128 (no TASK required)
-            yolo export model=yolov8n-cls.pt format=onnx imgsz=224,128
+        Export a YOLOv8n detection model to ONNX format at image size 224 by 128 (no TASK required)
+            yolo export model=yolov8n.pt format=onnx imgsz=224,128
 
     3. Run special commands:
 
@@ -68,7 +66,7 @@ def cli(cfg):
     task, mode = cfg.task.lower(), cfg.mode.lower()
 
     # Mapping from task to module
-    tasks = {"detect": yolo.v8.detect, "segment": yolo.v8.segment, "classify": yolo.v8.classify}
+    tasks = {"detect": yolo.v8.detect}
     module = tasks.get(task)
     if not module:
         raise SyntaxError(f"yolo task={task} is invalid. Valid tasks are: {', '.join(tasks.keys())}\n{CLI_HELP_MSG}")
@@ -89,7 +87,7 @@ def entrypoint():
 
     This function allows for:
     - passing mandatory YOLO args as a list of strings
-    - specifying the task to be performed, either 'detect', 'segment' or 'classify'
+    - specifying the task to be performed ('detect')
     - specifying the mode, either 'train', 'val', 'test', or 'predict'
     - running special modes like 'checks'
     - passing overrides to the package's configuration
@@ -101,7 +99,7 @@ def entrypoint():
     parser.add_argument('args', type=str, nargs='+', help='YOLO args')
     args = parser.parse_args().args
 
-    tasks = 'detect', 'segment', 'classify'
+    tasks = 'detect',
     modes = 'train', 'val', 'predict', 'export'
     special_modes = {
         'help': lambda: LOGGER.info(CLI_HELP_MSG),

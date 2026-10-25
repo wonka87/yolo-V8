@@ -8,7 +8,6 @@ import numpy as np
 import torch
 
 from ultralytics.yolo.data import build_dataloader
-from ultralytics.yolo.data.dataloaders.v5loader import create_dataloader
 from ultralytics.yolo.engine.validator import BaseValidator
 from ultralytics.yolo.utils import DEFAULT_CONFIG, colorstr, ops, yaml_load
 from ultralytics.yolo.utils.checks import check_file, check_requirements
@@ -164,19 +163,7 @@ class DetectionValidator(BaseValidator):
         # TODO: manage splits differently
         # calculate stride - check if model is initialized
         gs = max(int(de_parallel(self.model).stride if self.model else 0), 32)
-        return create_dataloader(path=dataset_path,
-                                 imgsz=self.args.imgsz,
-                                 batch_size=batch_size,
-                                 stride=gs,
-                                 hyp=dict(self.args),
-                                 cache=False,
-                                 pad=0.5,
-                                 rect=True,
-                                 workers=self.args.workers,
-                                 prefix=colorstr(f'{self.args.mode}: '),
-                                 shuffle=False,
-                                 seed=self.args.seed)[0] if self.args.v5loader else \
-            build_dataloader(self.args, batch_size, img_path=dataset_path, stride=gs, mode="val")[0]
+        return build_dataloader(self.args, batch_size, img_path=dataset_path, stride=gs, mode="val")[0]
 
     def plot_val_samples(self, batch, ni):
         plot_images(batch["img"],
