@@ -132,7 +132,9 @@ class TaskAlignedAssigner(nn.Module):
 
         # CIoU of every (gt, anchor) pair, computed in chunks of gts: element-wise identical to one big call, but the
         # ~15 temporary (b, n, h*w) tensors inside bbox_iou only exist for `chunk` gts at a time
-        overlaps = torch.empty_like(bbox_scores)
+        # same dtype bbox_iou would return (fp32 boxes) - NOT bbox_scores' dtype, which is fp16 under AMP
+        overlaps = torch.empty(bbox_scores.shape, dtype=torch.promote_types(gt_bboxes.dtype, pd_bboxes.dtype),
+                               device=bbox_scores.device)
         chunk = max(1, int(self.chunk_elems // max(1, self.bs * pd_bboxes.shape[1])))
         for i in range(0, self.n_max_boxes, chunk):
             overlaps[:, i:i + chunk] = bbox_iou(gt_bboxes[:, i:i + chunk].unsqueeze(2), pd_bboxes.unsqueeze(1),
