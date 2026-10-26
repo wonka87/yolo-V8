@@ -255,7 +255,9 @@ class BaseTrainer:
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100)  # number of warmup iterations
         last_opt_step = -1
-        prof = TrainProfiler(enabled=os.getenv('YOLO_PROFILE', '') == '1' and rank in {-1, 0})
+        prof_level = int(os.getenv('YOLO_PROFILE', '0') or 0)
+        prof = TrainProfiler(enabled=prof_level > 0 and rank in {-1, 0}, level=prof_level)
+        phase = TrainProfiler.phase
         self.run_callbacks("on_train_start")
         self.log(f"Image sizes {self.args.imgsz} train, {self.args.imgsz} val\n"
                  f'Using {self.train_loader.num_workers * (world_size or 1)} dataloader workers\n'
@@ -302,20 +304,24 @@ class BaseTrainer:
 
                 # Forward
                 with torch.amp.autocast('cuda', enabled=self.amp):
-                    batch = self.preprocess_batch(batch)
-                    preds = self.model(batch["img"])
-                    self.loss, self.loss_items = self.criterion(preds, batch)
+                    with phase('forward'):
+                        batch = self.preprocess_batch(batch)
+                        preds = self.model(batch["img"])
+                    with phase('loss'):
+                        self.loss, self.loss_items = self.criterion(preds, batch)
                     if rank != -1:
                         self.loss *= world_size
                     self.tloss = (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None \
                         else self.loss_items
 
                 # Backward
-                self.scaler.scale(self.loss).backward()
+                with phase('backward'):
+                    self.scaler.scale(self.loss).backward()
 
                 # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
                 if ni - last_opt_step >= self.accumulate:
-                    self.optimizer_step()
+                    with phase('optimizer'):
+                        self.optimizer_step()
                     last_opt_step = ni
 
                 # Log

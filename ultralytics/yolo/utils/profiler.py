@@ -6,8 +6,12 @@
   already synchronizes CUDA, so this includes the GPU work)
 - epoch_end_s: per-epoch work after the batch loop (scheduler, EMA attrs, final val, checkpoint save)
 - gpu_util_mean / gpu_util_samples: nvidia-smi utilization sampled every second during training
+YOLO_PROFILE=2 additionally times the phases of each step (forward, loss, assigner, backward, optimizer, log) with a
+CUDA synchronize at every phase boundary (adds a little overhead, does not change results) and records the padded
+number of gts per batch (the assigner works on batch x max_gts x anchors).
 Writes <save_dir>/profile.json at the end of training.
 """
+import contextlib
 import json
 import shutil
 import subprocess
@@ -16,9 +20,13 @@ import time
 
 
 class TrainProfiler:
+    current = None  # the running profiler, for phase timing inside the loss (TrainProfiler.phase)
 
-    def __init__(self, enabled=False, sample_s=1.0):
+    def __init__(self, enabled=False, sample_s=1.0, level=1):
         self.enabled = enabled
+        self.level = level if enabled else 0
+        self.phases, self.counters = {}, {}
+        TrainProfiler.current = self if enabled else None
         self.data_wait = self.step = self.epoch_end = 0.0
         self.n_batches = self.n_epochs = 0
         self.epochs = []
@@ -39,6 +47,33 @@ class TrainProfiler:
             except Exception:
                 pass
             self._stop.wait(sample_s)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def phase(name):
+        """Time a phase of the training step (YOLO_PROFILE=2 only; no-op otherwise)."""
+        p = TrainProfiler.current
+        if p is None or p.level < 2:
+            yield
+            return
+        import torch
+        cuda = torch.cuda.is_available()
+        if cuda:
+            torch.cuda.synchronize()
+        t = time.time()
+        try:
+            yield
+        finally:
+            if cuda:
+                torch.cuda.synchronize()
+            p.phases[name] = p.phases.get(name, 0.0) + time.time() - t
+
+    @staticmethod
+    def count(name, value):
+        p = TrainProfiler.current
+        if p is not None and p.level >= 2:
+            s, n = p.counters.get(name, (0.0, 0))
+            p.counters[name] = (s + float(value), n + 1)
 
     def epoch_start(self):
         if self.enabled:
@@ -82,6 +117,10 @@ class TrainProfiler:
             'data_wait_s': round(self.data_wait, 1), 'step_s': round(self.step, 1), 'epoch_end_s': round(self.epoch_end, 1),
             'data_wait_frac': round(self.data_wait / total, 3) if total else None,
             'gpu_util_mean': round(sum(self._util) / len(self._util), 1) if self._util else None,
-            'gpu_util_samples': len(self._util), 'per_epoch': self.epochs}
+            'gpu_util_samples': len(self._util),
+            'phases_s': {k: round(v, 1) for k, v in self.phases.items()},
+            'counters_mean': {k: round(s / n, 1) for k, (s, n) in self.counters.items() if n},
+            'per_epoch': self.epochs}
+        TrainProfiler.current = None
         with open(path, 'w') as f:
             json.dump(d, f)

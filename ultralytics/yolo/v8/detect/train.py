@@ -14,6 +14,7 @@ from ultralytics.yolo.utils import DEFAULT_CONFIG, colorstr
 from ultralytics.yolo.utils.loss import BboxLoss
 from ultralytics.yolo.utils.ops import xywh2xyxy
 from ultralytics.yolo.utils.plotting import plot_images, plot_results
+from ultralytics.yolo.utils.profiler import TrainProfiler
 from ultralytics.yolo.utils.tal import TaskAlignedAssigner, dist2bbox, make_anchors
 from ultralytics.yolo.utils.torch_utils import de_parallel
 
@@ -156,9 +157,11 @@ class Loss:
         # pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
 
-        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+        TrainProfiler.count('max_gts_per_batch', gt_bboxes.shape[1])
+        with TrainProfiler.phase('assigner'):
+            _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+                pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+                anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
 
         target_bboxes /= stride_tensor
         target_scores_sum = target_scores.sum()
