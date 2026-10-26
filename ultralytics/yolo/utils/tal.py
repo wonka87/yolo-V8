@@ -22,9 +22,9 @@ def select_candidates_in_gts(xy_centers, gt_bboxes, eps=1e-9):
     n_anchors = xy_centers.shape[0]
     bs, n_boxes, _ = gt_bboxes.shape
     lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2)  # left-top, right-bottom
-    bbox_deltas = torch.cat((xy_centers[None] - lt, rb - xy_centers[None]), dim=2).view(bs, n_boxes, n_anchors, -1)
-    # return (bbox_deltas.min(3)[0] > eps).to(gt_bboxes.dtype)
-    return bbox_deltas.amin(3).gt_(eps)
+    # same result as cat((xy - lt, rb - xy)).amin(-1) > eps, without materializing the (b, n, h*w, 4) tensor
+    d = torch.minimum((xy_centers[None] - lt).amin(2), (rb - xy_centers[None]).amin(2))
+    return d.view(bs, n_boxes, n_anchors).gt_(eps)
 
 
 def select_highest_overlaps(mask_pos, overlaps, n_max_boxes):
@@ -42,10 +42,11 @@ def select_highest_overlaps(mask_pos, overlaps, n_max_boxes):
     # (b, n_max_boxes, h*w) -> (b, h*w)
     fg_mask = mask_pos.sum(-2)
     if fg_mask.max() > 1:  # one anchor is assigned to multiple gt_bboxes
-        mask_multi_gts = (fg_mask.unsqueeze(1) > 1).repeat([1, n_max_boxes, 1])  # (b, n_max_boxes, h*w)
+        mask_multi_gts = fg_mask.unsqueeze(1) > 1  # (b, 1, h*w), broadcast below
         max_overlaps_idx = overlaps.argmax(1)  # (b, h*w)
-        is_max_overlaps = F.one_hot(max_overlaps_idx, n_max_boxes)  # (b, h*w, n_max_boxes)
-        is_max_overlaps = is_max_overlaps.permute(0, 2, 1).to(overlaps.dtype)  # (b, n_max_boxes, h*w)
+        # one-hot over the gt axis via scatter (same values as F.one_hot(...).permute, no int64 copy)
+        is_max_overlaps = torch.zeros_like(mask_pos, dtype=overlaps.dtype)  # (b, n_max_boxes, h*w)
+        is_max_overlaps.scatter_(1, max_overlaps_idx.unsqueeze(1), 1)
         mask_pos = torch.where(mask_multi_gts, is_max_overlaps, mask_pos)  # (b, n_max_boxes, h*w)
         fg_mask = mask_pos.sum(-2)
     # find each grid serve which gt(index)
@@ -63,6 +64,7 @@ class TaskAlignedAssigner(nn.Module):
         self.alpha = alpha
         self.beta = beta
         self.eps = eps
+        self.chunk_elems = 2 ** 24  # max b * gts * anchors per CIoU chunk (~64 MB per float32 temporary)
 
     @torch.no_grad()
     def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt):
@@ -128,7 +130,15 @@ class TaskAlignedAssigner(nn.Module):
         # get the scores of each grid for each gt cls
         bbox_scores = pd_scores[ind[0], :, ind[1]]  # b, max_num_obj, h*w
 
-        overlaps = bbox_iou(gt_bboxes.unsqueeze(2), pd_bboxes.unsqueeze(1), xywh=False, CIoU=True).squeeze(3).clamp(0)
+        # CIoU of every (gt, anchor) pair, computed in chunks of gts: element-wise identical to one big call, but the
+        # ~15 temporary (b, n, h*w) tensors inside bbox_iou only exist for `chunk` gts at a time
+        # same dtype bbox_iou would return (fp32 boxes) - NOT bbox_scores' dtype, which is fp16 under AMP
+        overlaps = torch.empty(bbox_scores.shape, dtype=torch.promote_types(gt_bboxes.dtype, pd_bboxes.dtype),
+                               device=bbox_scores.device)
+        chunk = max(1, int(self.chunk_elems // max(1, self.bs * pd_bboxes.shape[1])))
+        for i in range(0, self.n_max_boxes, chunk):
+            overlaps[:, i:i + chunk] = bbox_iou(gt_bboxes[:, i:i + chunk].unsqueeze(2), pd_bboxes.unsqueeze(1),
+                                                xywh=False, CIoU=True).squeeze(3).clamp(0)
         align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
         return align_metric, overlaps
 
@@ -139,15 +149,17 @@ class TaskAlignedAssigner(nn.Module):
             topk_mask: (b, max_num_obj, topk) or None
         """
 
-        num_anchors = metrics.shape[-1]  # h*w
         # (b, max_num_obj, topk)
         topk_metrics, topk_idxs = torch.topk(metrics, self.topk, dim=-1, largest=largest)
         if topk_mask is None:
             topk_mask = (topk_metrics.max(-1, keepdim=True) > self.eps).tile([1, 1, self.topk])
         # (b, max_num_obj, topk)
         topk_idxs = torch.where(topk_mask, topk_idxs, 0)
-        # (b, max_num_obj, topk, h*w) -> (b, max_num_obj, h*w)
-        is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)
+        # count how often each anchor is picked = F.one_hot(topk_idxs, h*w).sum(-2), without the
+        # (b, max_num_obj, topk, h*w) int64 tensor (the largest allocation of the old code)
+        cnt_dtype = torch.int8 if self.topk < 127 else torch.int32
+        is_in_topk = torch.zeros(metrics.shape, dtype=cnt_dtype, device=metrics.device)
+        is_in_topk.scatter_add_(-1, topk_idxs, torch.ones_like(topk_idxs, dtype=cnt_dtype))
         # filter invalid bboxes
         is_in_topk = torch.where(is_in_topk > 1, 0, is_in_topk)
         return is_in_topk.to(metrics.dtype)
