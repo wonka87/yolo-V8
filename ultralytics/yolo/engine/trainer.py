@@ -33,6 +33,7 @@ from ultralytics.yolo.utils.autobatch import check_train_batch_size
 from ultralytics.yolo.utils.checks import check_file, check_imgsz, print_args
 from ultralytics.yolo.utils.dist import ddp_cleanup, generate_ddp_command
 from ultralytics.yolo.utils.files import get_latest_run, increment_path
+from ultralytics.yolo.utils.profiler import TrainProfiler
 from ultralytics.yolo.utils.torch_utils import ModelEMA, de_parallel, init_seeds, one_cycle, strip_optimizer
 
 
@@ -91,6 +92,12 @@ class BaseTrainer:
         self.model = None
         self.callbacks = defaultdict(list)
         init_seeds(self.args.seed + 1 + RANK, deterministic=self.args.deterministic)
+        # opt-in speed experiments (default off = unchanged behaviour):
+        #   YOLO_CUDNN_BENCHMARK=1 lets cuDNN pick the fastest conv algorithms (needs deterministic=False to matter)
+        #   YOLO_CHANNELS_LAST=1 trains in NHWC memory format (faster Tensor Core convs under AMP)
+        self.channels_last = os.getenv('YOLO_CHANNELS_LAST', '') == '1'
+        if os.getenv('YOLO_CUDNN_BENCHMARK', '') == '1':
+            torch.backends.cudnn.benchmark = True
 
         # Dirs
         project = self.args.project or Path(SETTINGS['runs_dir']) / self.args.task
@@ -200,6 +207,8 @@ class BaseTrainer:
         self.run_callbacks("on_pretrain_routine_start")
         ckpt = self.setup_model()
         self.model = self.model.to(self.device)
+        if self.channels_last:
+            self.model = self.model.to(memory_format=torch.channels_last)
         self.set_model_attributes()
         if world_size > 1:
             self.model = DDP(self.model, device_ids=[rank])
@@ -254,6 +263,9 @@ class BaseTrainer:
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100)  # number of warmup iterations
         last_opt_step = -1
+        prof_level = int(os.getenv('YOLO_PROFILE', '0') or 0)
+        prof = TrainProfiler(enabled=prof_level > 0 and rank in {-1, 0}, level=prof_level)
+        phase = TrainProfiler.phase
         self.run_callbacks("on_train_start")
         self.log(f"Image sizes {self.args.imgsz} train, {self.args.imgsz} val\n"
                  f'Using {self.train_loader.num_workers * (world_size or 1)} dataloader workers\n'
@@ -282,7 +294,9 @@ class BaseTrainer:
                 pbar = tqdm(enumerate(self.train_loader), total=nb, bar_format=TQDM_BAR_FORMAT)
             self.tloss = None
             self.optimizer.zero_grad()
+            prof.epoch_start()
             for i, batch in pbar:
+                prof.batch_ready()
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
                 ni = i + nb * epoch
@@ -298,20 +312,24 @@ class BaseTrainer:
 
                 # Forward
                 with torch.amp.autocast('cuda', enabled=self.amp):
-                    batch = self.preprocess_batch(batch)
-                    preds = self.model(batch["img"])
-                    self.loss, self.loss_items = self.criterion(preds, batch)
+                    with phase('forward'):
+                        batch = self.preprocess_batch(batch)
+                        preds = self.model(batch["img"])
+                    with phase('loss'):
+                        self.loss, self.loss_items = self.criterion(preds, batch)
                     if rank != -1:
                         self.loss *= world_size
                     self.tloss = (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None \
                         else self.loss_items
 
                 # Backward
-                self.scaler.scale(self.loss).backward()
+                with phase('backward'):
+                    self.scaler.scale(self.loss).backward()
 
                 # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
                 if ni - last_opt_step >= self.accumulate:
-                    self.optimizer_step()
+                    with phase('optimizer'):
+                        self.optimizer_step()
                     last_opt_step = ni
 
                 # Log
@@ -327,7 +345,9 @@ class BaseTrainer:
                         self.plot_training_samples(batch, ni)
 
                 self.run_callbacks("on_train_batch_end")
+                prof.batch_done()
 
+            prof.epoch_loop_done()
             self.lr = {f"lr/pg{ir}": x['lr'] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
 
             self.scheduler.step()
@@ -347,12 +367,14 @@ class BaseTrainer:
                     self.save_model()
                     self.run_callbacks('on_model_save')
 
+            prof.epoch_done()
             tnow = time.time()
             self.epoch_time = tnow - self.epoch_time_start
             self.epoch_time_start = tnow
             self.run_callbacks("on_fit_epoch_end")
             # TODO: termination condition
 
+        prof.write(self.save_dir / 'profile.json')
         if rank in {-1, 0}:
             # Do final val with best.pt
             self.log(f'\n{epoch - self.start_epoch + 1} epochs completed in '
@@ -370,7 +392,7 @@ class BaseTrainer:
             'epoch': self.epoch,
             'best_fitness': self.best_fitness,
             'model': None,  # loaders use 'ema' first (tasks.attempt_load_*), strip_optimizer() copies ema -> model
-            'ema': deepcopy(self.ema.ema).half(),
+            'ema': deepcopy(self.ema.ema).to(memory_format=torch.contiguous_format).half(),  # NCHW in the .pt
             'updates': self.ema.updates,
             'optimizer': self.optimizer.state_dict(),
             'train_args': self.args,
