@@ -30,6 +30,8 @@ class DetectionTrainer(BaseTrainer):
 
     def preprocess_batch(self, batch):
         batch["img"] = batch["img"].to(self.device, non_blocking=True).float() / 255
+        if getattr(self, 'channels_last', False):
+            batch["img"] = batch["img"].contiguous(memory_format=torch.channels_last)
         return batch
 
     def set_model_attributes(self):

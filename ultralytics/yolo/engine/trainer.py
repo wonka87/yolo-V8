@@ -92,6 +92,12 @@ class BaseTrainer:
         self.model = None
         self.callbacks = defaultdict(list)
         init_seeds(self.args.seed + 1 + RANK, deterministic=self.args.deterministic)
+        # opt-in speed experiments (default off = unchanged behaviour):
+        #   YOLO_CUDNN_BENCHMARK=1 lets cuDNN pick the fastest conv algorithms (needs deterministic=False to matter)
+        #   YOLO_CHANNELS_LAST=1 trains in NHWC memory format (faster Tensor Core convs under AMP)
+        self.channels_last = os.getenv('YOLO_CHANNELS_LAST', '') == '1'
+        if os.getenv('YOLO_CUDNN_BENCHMARK', '') == '1':
+            torch.backends.cudnn.benchmark = True
 
         # Dirs
         project = self.args.project or Path(SETTINGS['runs_dir']) / self.args.task
@@ -201,6 +207,8 @@ class BaseTrainer:
         self.run_callbacks("on_pretrain_routine_start")
         ckpt = self.setup_model()
         self.model = self.model.to(self.device)
+        if self.channels_last:
+            self.model = self.model.to(memory_format=torch.channels_last)
         self.set_model_attributes()
         if world_size > 1:
             self.model = DDP(self.model, device_ids=[rank])
@@ -384,7 +392,7 @@ class BaseTrainer:
             'epoch': self.epoch,
             'best_fitness': self.best_fitness,
             'model': None,  # loaders use 'ema' first (tasks.attempt_load_*), strip_optimizer() copies ema -> model
-            'ema': deepcopy(self.ema.ema).half(),
+            'ema': deepcopy(self.ema.ema).to(memory_format=torch.contiguous_format).half(),  # NCHW in the .pt
             'updates': self.ema.updates,
             'optimizer': self.optimizer.state_dict(),
             'train_args': self.args,
