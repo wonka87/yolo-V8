@@ -55,3 +55,13 @@ def test_select_candidates_in_gts_matches_reference():
     lt, rb = gt.view(-1, 1, 4).chunk(2, 2)
     ref = torch.cat((anc[None] - lt, rb - anc[None]), dim=2).view(*gt.shape[:2], anc.shape[0], -1).amin(3).gt_(1e-9)
     assert torch.equal(tal.select_candidates_in_gts(anc, gt), ref)
+
+
+def test_assigner_matches_reference_with_half_scores():
+    # under AMP the trainer passes fp16 scores and fp32 boxes; overlaps must stay fp32 like the original
+    pd_scores, pd_bboxes, anc, labels, gt, mask = _inputs(seed=5)
+    args = (pd_scores.half(), pd_bboxes, anc, labels, gt, mask)
+    new = tal.TaskAlignedAssigner(topk=10, num_classes=2, alpha=0.5, beta=6.0)
+    ref = _ReferenceAssigner(topk=10, num_classes=2, alpha=0.5, beta=6.0)
+    for x, y in zip(new(*args), ref(*args)):
+        assert x.dtype == y.dtype and torch.equal(x, y)
