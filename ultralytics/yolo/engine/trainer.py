@@ -33,6 +33,7 @@ from ultralytics.yolo.utils.autobatch import check_train_batch_size
 from ultralytics.yolo.utils.checks import check_file, check_imgsz, print_args
 from ultralytics.yolo.utils.dist import ddp_cleanup, generate_ddp_command
 from ultralytics.yolo.utils.files import get_latest_run, increment_path
+from ultralytics.yolo.utils.profiler import TrainProfiler
 from ultralytics.yolo.utils.torch_utils import ModelEMA, de_parallel, init_seeds, one_cycle, strip_optimizer
 
 
@@ -254,6 +255,7 @@ class BaseTrainer:
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100)  # number of warmup iterations
         last_opt_step = -1
+        prof = TrainProfiler(enabled=os.getenv('YOLO_PROFILE', '') == '1' and rank in {-1, 0})
         self.run_callbacks("on_train_start")
         self.log(f"Image sizes {self.args.imgsz} train, {self.args.imgsz} val\n"
                  f'Using {self.train_loader.num_workers * (world_size or 1)} dataloader workers\n'
@@ -282,7 +284,9 @@ class BaseTrainer:
                 pbar = tqdm(enumerate(self.train_loader), total=nb, bar_format=TQDM_BAR_FORMAT)
             self.tloss = None
             self.optimizer.zero_grad()
+            prof.epoch_start()
             for i, batch in pbar:
+                prof.batch_ready()
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
                 ni = i + nb * epoch
@@ -327,7 +331,9 @@ class BaseTrainer:
                         self.plot_training_samples(batch, ni)
 
                 self.run_callbacks("on_train_batch_end")
+                prof.batch_done()
 
+            prof.epoch_loop_done()
             self.lr = {f"lr/pg{ir}": x['lr'] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
 
             self.scheduler.step()
@@ -347,12 +353,14 @@ class BaseTrainer:
                     self.save_model()
                     self.run_callbacks('on_model_save')
 
+            prof.epoch_done()
             tnow = time.time()
             self.epoch_time = tnow - self.epoch_time_start
             self.epoch_time_start = tnow
             self.run_callbacks("on_fit_epoch_end")
             # TODO: termination condition
 
+        prof.write(self.save_dir / 'profile.json')
         if rank in {-1, 0}:
             # Do final val with best.pt
             self.log(f'\n{epoch - self.start_epoch + 1} epochs completed in '
