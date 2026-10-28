@@ -1,9 +1,6 @@
 # Ultralytics YOLO 🚀, GPL-3.0 license
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except ImportError:  # tensorboard is optional
-    SummaryWriter = None
+from torch.utils.tensorboard import SummaryWriter
 
 writer = None  # TensorBoard SummaryWriter instance
 
@@ -29,4 +26,4 @@ def on_fit_epoch_end(trainer):
 callbacks = {
     "on_pretrain_routine_start": on_pretrain_routine_start,
     "on_fit_epoch_end": on_fit_epoch_end,
-    "on_batch_end": on_batch_end} if SummaryWriter else {}
+    "on_batch_end": on_batch_end}

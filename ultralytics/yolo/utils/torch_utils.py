@@ -10,10 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-try:
-    import thop  # optional, only used to report GFLOPs
-except ImportError:
-    thop = None
+import thop
 import torch
 import torch.distributed as dist
 import torch.nn as nn

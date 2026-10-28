@@ -99,7 +99,19 @@ def test_export_onnx():
     model.export(format='onnx')
 
 
+def test_export_openvino():
+    model = YOLO(MODEL)
+    model.export(format='openvino')
 
+
+def test_export_coreml():
+    model = YOLO(MODEL)
+    model.export(format='coreml')
+
+
+def test_export_paddle():
+    model = YOLO(MODEL)
+    model.export(format='paddle')
 
 
 def test_all_model_yamls():

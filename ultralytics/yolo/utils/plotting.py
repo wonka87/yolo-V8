@@ -8,6 +8,7 @@ from urllib.error import URLError
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
@@ -292,7 +293,6 @@ def plot_results(file='path/to/results.csv', dir='', segment=False):
     assert len(files), f'No results.csv files found in {save_dir.resolve()}, nothing to plot.'
     for f in files:
         try:
-            import pandas as pd  # lazy: only needed for results.png
             data = pd.read_csv(f)
             s = [x.strip() for x in data.columns]
             x = data.values[:, 0]

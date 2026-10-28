@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Union
 
 import cv2
+import git
 import numpy as np
+import pandas as pd
 import torch
 import yaml
 
@@ -68,6 +70,7 @@ HELP_MSG = \
 # Settings
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
 np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
+pd.options.display.max_columns = 10
 cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with PyTorch DataLoader)
 os.environ['NUMEXPR_MAX_THREADS'] = str(NUM_THREADS)  # NumExpr max threads
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  # for deterministic training
@@ -131,16 +134,6 @@ def is_docker() -> bool:
         return False
 
 
-def _find_git_root():
-    """Return the first directory from the current working directory upwards that contains `.git`, else None.
-    Same lookup as `git.Repo(search_parent_directories=True)` without the GitPython dependency."""
-    cwd = Path.cwd().resolve()
-    for d in (cwd, *cwd.parents):
-        if (d / '.git').exists():
-            return d
-    return None
-
-
 def is_git_directory() -> bool:
     """
     Check if the current working directory is inside a git repository.
@@ -148,7 +141,12 @@ def is_git_directory() -> bool:
     Returns:
         bool: True if the current working directory is inside a git repository, False otherwise.
     """
-    return _find_git_root() is not None
+    try:
+        git.Repo(search_parent_directories=True)
+        # subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True, check=True)  # CLI alternative
+        return True
+    except git.exc.InvalidGitRepositoryError:  # subprocess.CalledProcessError:
+        return False
 
 
 def is_pip_package(filepath: str = __name__) -> bool:
@@ -205,7 +203,12 @@ def get_git_root_dir():
     Determines whether the current file is part of a git repository and if so, returns the repository root directory.
     If the current file is not part of a git repository, returns None.
     """
-    return _find_git_root()
+    try:
+        # output = subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True, check=True)
+        # return Path(output.stdout.strip().decode('utf-8')).parent.resolve()  # CLI alternative
+        return Path(git.Repo(search_parent_directories=True).working_tree_dir)
+    except git.exc.InvalidGitRepositoryError:  # (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def get_default_args(func):

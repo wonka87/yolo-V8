@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from ultralytics import yolo  # noqa
-from ultralytics.nn.tasks import DetectionModel, attempt_load_one_weight
+from ultralytics.nn.tasks import ClassificationModel, DetectionModel, SegmentationModel, attempt_load_one_weight
 from ultralytics.yolo.configs import get_config
 from ultralytics.yolo.engine.exporter import Exporter
 from ultralytics.yolo.utils import DEFAULT_CONFIG, LOGGER, yaml_load
@@ -12,9 +12,15 @@ from ultralytics.yolo.utils.torch_utils import guess_task_from_head, smart_infer
 
 # Map head to model, trainer, validator, and predictor classes
 MODEL_MAP = {
+    "classify": [
+        ClassificationModel, 'yolo.TYPE.classify.ClassificationTrainer', 'yolo.TYPE.classify.ClassificationValidator',
+        'yolo.TYPE.classify.ClassificationPredictor'],
     "detect": [
         DetectionModel, 'yolo.TYPE.detect.DetectionTrainer', 'yolo.TYPE.detect.DetectionValidator',
-        'yolo.TYPE.detect.DetectionPredictor']}
+        'yolo.TYPE.detect.DetectionPredictor'],
+    "segment": [
+        SegmentationModel, 'yolo.TYPE.segment.SegmentationTrainer', 'yolo.TYPE.segment.SegmentationValidator',
+        'yolo.TYPE.segment.SegmentationPredictor']}
 
 
 class YOLO:
@@ -206,8 +212,6 @@ class YOLO:
         self.model.to(device)
 
     def _guess_ops_from_task(self, task):
-        if task not in MODEL_MAP:
-            raise NotImplementedError(f"task={task} is not supported in this fork (detect only)")
         model_class, train_lit, val_lit, pred_lit = MODEL_MAP[task]
         # warning: eval is unsafe. Use with caution
         trainer_class = eval(train_lit.replace("TYPE", f"{self.type}"))

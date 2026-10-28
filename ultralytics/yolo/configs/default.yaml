@@ -108,3 +108,4 @@ hydra:
     dir: .
 
 # Debug, do not modify -------------------------------------------------------------------------------------------------
+v5loader: False  # use legacy YOLOv5 dataloader
