@@ -363,7 +363,7 @@ class AutoBackend(nn.Module):
         # Return model type from model path, i.e. path='path/to/model.onnx' -> type=onnx
         # types = [pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle]
         from ultralytics.yolo.engine.exporter import export_formats
-        sf = export_formats()['Suffix']  # export suffixes
+        sf = list(export_formats().Suffix)  # export suffixes
         if not is_url(p, check=False) and not isinstance(p, str):
             check_suffix(p, sf)  # checks
         url = urlparse(p)  # if url may be Triton inference server

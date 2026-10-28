@@ -3,10 +3,7 @@
 import contextlib
 from copy import deepcopy
 
-try:
-    import thop  # optional, only used to report GFLOPs
-except ImportError:
-    thop = None
+import thop
 import torch
 import torch.nn as nn
 

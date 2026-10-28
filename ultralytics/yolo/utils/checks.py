@@ -21,6 +21,7 @@ from packaging.requirements import Requirement
 from packaging.version import parse as parse_version
 import psutil
 import torch
+from IPython import display
 
 from ultralytics.yolo.utils import (AUTOINSTALL, FONT, LOGGER, ROOT, USER_CONFIG_DIR, TryExcept, colorstr, emojis,
                                     is_colab, is_docker, is_jupyter_notebook)
@@ -271,11 +272,7 @@ def check_yolo(verbose=True):
         gib = 1 << 30  # bytes per GiB
         ram = psutil.virtual_memory().total
         total, used, free = shutil.disk_usage("/")
-        try:  # IPython is optional; clear_output() is a no-op outside notebooks anyway
-            from IPython import display
-            display.clear_output()
-        except ImportError:
-            pass
+        display.clear_output()
         s = f'({os.cpu_count()} CPUs, {ram / gib:.1f} GB RAM, {(total - free) / gib:.1f}/{total / gib:.1f} GB disk)'
     else:
         s = ''
